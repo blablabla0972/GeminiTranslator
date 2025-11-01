@@ -128,8 +128,23 @@
   });
   mo.observe(document.documentElement, { childList:true, characterData:true, subtree:true });
 
+  function toggle(on){ if (on) { enable(); } else { disable(); } return { ok:true, enabled }; }
+
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'PING_CS'){ sendResponse({ ok:true }); return; }
-    if (msg?.type === 'TRANSLATE_TOGGLE'){ if (msg.on) enable(); else disable(); sendResponse({ ok:true, enabled }); return; }
+    if (msg?.type === 'TRANSLATE_TOGGLE'){ const res = toggle(Boolean(msg.on)); sendResponse({ ok: true, enabled: res.enabled }); return; }
   });
+
+  try {
+    if (typeof window !== 'undefined') {
+      window.__AI_TRANSLATOR_VI_TOGGLE__ = (on) => {
+        try {
+          const res = toggle(Boolean(on));
+          return { ok: true, enabled: res.enabled };
+        } catch (err) {
+          return { ok: false, error: String(err) };
+        }
+      };
+    }
+  } catch (_) {}
 })();
