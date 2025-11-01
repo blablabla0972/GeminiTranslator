@@ -34,27 +34,62 @@ function buildPrompt(batch){
 }
 
 function normalizePairs(x){
-  function norm(it){
-    if (!it || typeof it !== 'object') return null;
-    const id = it.id ?? it.i ?? it.key ?? it.k;
-    const vi = it.vi ?? it.text ?? it.translation ?? it.v ?? it.t;
-    if (id == null || vi == null) return null;
-    return { id: String(id), vi: String(vi) };
+  const out = [];
+
+  function pushPair(id, vi){
+    if (id == null || vi == null) return;
+    if (typeof vi === 'object'){
+      const nested = vi.vi ?? vi.text ?? vi.translation ?? vi.v ?? vi.t;
+      if (nested == null) return;
+      vi = nested;
+    }
+    out.push({ id: String(id), vi: String(vi) });
   }
+
+  function fromObject(it, fallbackId){
+    if (!it || typeof it !== 'object') return false;
+    const id = it.id ?? it.i ?? it.key ?? it.k ?? fallbackId;
+    let vi = it.vi ?? it.text ?? it.translation ?? it.v ?? it.t;
+    if (vi == null && typeof it.value === 'string') vi = it.value;
+    if (vi == null && typeof it.output === 'string') vi = it.output;
+    if (vi == null && typeof it.content === 'string') vi = it.content;
+    if (id == null || vi == null) return false;
+    pushPair(id, vi);
+    return true;
+  }
+
+  function norm(it, fallbackId){
+    if (it == null) return;
+    if (Array.isArray(it)){
+      if (it.length >= 2){
+        const id = it[0] ?? fallbackId;
+        const vi = it[1];
+        pushPair(id, vi);
+      }
+      return;
+    }
+    if (typeof it !== 'object'){
+      if (fallbackId != null) pushPair(fallbackId, it);
+      return;
+    }
+    fromObject(it, fallbackId);
+  }
+
   if (Array.isArray(x)){
-    return x.map(norm).filter(Boolean);
+    for (const item of x) norm(item);
+    return out;
   }
   if (x && typeof x === 'object'){
-    // support { "1": "Xin chào", "2": "..." }
-    return Object.entries(x)
-      .map(([k, v]) => {
-        if (v == null) return null;
-        if (typeof v === 'object') return null;
-        return { id: String(k), vi: String(v) };
-      })
-      .filter(Boolean);
+    for (const [k, v] of Object.entries(x)){
+      if (v == null) continue;
+      if (typeof v === 'object' && !Array.isArray(v)){
+        if (fromObject(v, k)) continue;
+      }
+      norm(v, k);
+    }
+    return out;
   }
-  return [];
+  return out;
 }
 
 function tryParseJSON(s){
@@ -121,9 +156,10 @@ function extractFromInlineData(inlineData){
   return extractNormalizedPairs(data);
 }
 
-function extractFromParts(parts){
+function extractFromParts(parts, textCollector){
   if (!Array.isArray(parts)) return null;
-  const textChunks = [];
+  const ownText = [];
+  const textChunks = Array.isArray(textCollector) ? textCollector : ownText;
 
   for (const part of parts){
     if (!part || typeof part !== 'object') continue;
@@ -149,11 +185,26 @@ function extractFromParts(parts){
     }
   }
 
+  if (!textCollector && ownText.length){
+    const normalized = extractNormalizedPairs(ownText.join('\n'));
+    if (normalized && normalized.length) return normalized;
+  }
+
+  return null;
+}
+
+function extractFromCandidates(candidates){
+  if (!Array.isArray(candidates)) return null;
+  const textChunks = [];
+  for (const cand of candidates){
+    const parts = cand?.content?.parts;
+    const structured = extractFromParts(parts, textChunks);
+    if (structured && structured.length) return structured;
+  }
   if (textChunks.length){
     const normalized = extractNormalizedPairs(textChunks.join('\n'));
     if (normalized && normalized.length) return normalized;
   }
-
   return null;
 }
 
@@ -195,8 +246,7 @@ async function callWithRetry(apiKey, model, batch){
   for (let attempt=0; attempt<MAX_RETRY; attempt++){
     const r = await rawCall(apiKey, model, batch, useJsonMode);
     if (r.ok){
-      const parts = r.json?.candidates?.[0]?.content?.parts;
-      const structured = extractFromParts(parts);
+      const structured = extractFromCandidates(r.json?.candidates);
       if (structured && structured.length) return structured;
 
       const fallback = extractNormalizedPairs(r.text);
