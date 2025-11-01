@@ -6,6 +6,7 @@
   const EXCLUDE_TAGS = new Set(['SCRIPT','STYLE','NOSCRIPT','TEXTAREA','INPUT','SELECT','CODE','PRE','KBD','SAMP','CANVAS','SVG','MATH','IFRAME','OBJECT','EMBED','VIDEO','AUDIO']);
   const translatedNodes = new WeakSet();
   const originalText = new WeakMap();
+  const appliedText = new WeakMap();
   const nodeId = new WeakMap();
   let idSeq = 1;
   let enabled = false;
@@ -66,7 +67,13 @@
     nodeId.forEach((id, node) => {
       if (translatedNodes.has(node)) return;
       const vi = byId.get(String(id));
-      if (typeof vi === 'string' && vi.length){ try { node.nodeValue = vi; translatedNodes.add(node); } catch {} }
+      if (typeof vi === 'string' && vi.length){
+        try {
+          node.nodeValue = vi;
+          translatedNodes.add(node);
+          appliedText.set(node, vi);
+        } catch {}
+      }
     });
   }
 
@@ -91,7 +98,13 @@
   function enable(){ if (enabled) return; enabled = true; translateNow(); }
   function disable(){
     enabled = false;
-    nodeId.forEach((id, node) => { const orig = originalText.get(node); if (typeof orig === 'string'){ try { node.nodeValue = orig; } catch {} } });
+    nodeId.forEach((id, node) => {
+      const orig = originalText.get(node);
+      if (typeof orig === 'string'){
+        try { node.nodeValue = orig; } catch {}
+      }
+      appliedText.delete(node);
+    });
     translatedNodes.clear();
     showToast('Đã khôi phục nội dung gốc.', 'ok');
   }
@@ -99,9 +112,17 @@
   const mo = new MutationObserver(muts => {
     if (!enabled) return;
     for (const m of muts){
-      if (m.type === 'childList' && m.addedNodes?.length) schedule();
-      else if (m.type === 'characterData'){
-        const n = m.target; if (translatedNodes.has(n)){ originalText.set(n, n.nodeValue); translatedNodes.delete(n); } schedule();
+      if (m.type === 'childList' && m.addedNodes?.length) { schedule(); continue; }
+      if (m.type === 'characterData'){
+        const n = m.target;
+        if (translatedNodes.has(n)){
+          const applied = appliedText.get(n);
+          if (applied === n.nodeValue) continue;
+          translatedNodes.delete(n);
+          appliedText.delete(n);
+        }
+        originalText.set(n, n.nodeValue);
+        schedule();
       }
     }
   });

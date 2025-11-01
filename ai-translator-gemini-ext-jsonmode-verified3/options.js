@@ -51,7 +51,7 @@ async function verifyKey(){
     s.className = 'hint warn';
   }
   try{
-    const r = await chrome.runtime.sendMessage({ type: 'TEST_API' });
+    const r = await chrome.runtime.sendMessage({ type: 'TEST_API', key: k, model: (modelEl.value || 'gemini-2.5-flash') });
     if (r && r.ok && (r.status===200 || r.status===204)){
       s.textContent = 'Hợp lệ ✓'; s.className = 'hint ok';
     } else {
