@@ -34,23 +34,131 @@ function buildPrompt(batch){
 }
 
 function normalizePairs(x){
-  function norm(it){
-    if (!it || typeof it !== 'object') return null;
-    const id = it.id ?? it.i ?? it.key ?? it.k;
-    const vi = it.vi ?? it.text ?? it.translation ?? it.v ?? it.t;
-    if (id == null || vi == null) return null;
-    return { id: String(id), vi: String(vi) };
+  const out = [];
+  const RESERVED_KEYS = new Set(['text','value','values','translation','translations','items','item','data','payload','parts','content','contents','output','outputs','response','responses','result','results','body','message','messages','answer','answers']);
+
+  function extractString(value, fallback){
+    if (value == null) return fallback ?? null;
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)){
+      if (value.length === 2 && typeof value[0] !== 'object' && typeof value[1] !== 'object'){
+        const left = extractString(value[0]);
+        const right = extractString(value[1]);
+        if (left != null && right != null) return left + '\n' + right;
+      }
+      const pieces = [];
+      for (const item of value){
+        const str = extractString(item);
+        if (str) pieces.push(str);
+      }
+      return pieces.length ? pieces.join('\n') : fallback ?? null;
+    }
+    if (typeof value === 'object'){
+      const direct = value.vi ?? value.text ?? value.translation ?? value.v ?? value.t ?? value.value ?? value.output ?? value.content ?? value.message ?? value.answer ?? value.response ?? value.stringValue ?? value.displayText;
+      if (direct != null){
+        return extractString(direct, fallback);
+      }
+      if (Array.isArray(value.parts)){
+        const partsPieces = [];
+        for (const part of value.parts){
+          const text = extractString(part?.text ?? part?.content ?? part);
+          if (text) partsPieces.push(text);
+        }
+        if (partsPieces.length) return partsPieces.join('\n');
+      }
+      if (Array.isArray(value.values)){
+        const valuesPieces = [];
+        for (const val of value.values){
+          const str = extractString(val);
+          if (str) valuesPieces.push(str);
+        }
+        if (valuesPieces.length) return valuesPieces.join('\n');
+      }
+      if (typeof value.data === 'string'){
+        return extractString(value.data, fallback);
+      }
+      if (typeof value.payload === 'string'){
+        return extractString(value.payload, fallback);
+      }
+    }
+    return fallback ?? null;
   }
-  if (Array.isArray(x)){
-    return x.map(norm).filter(Boolean);
+
+  function usableFallback(id){
+    if (id == null) return undefined;
+    const str = extractString(id);
+    if (!str) return undefined;
+    if (RESERVED_KEYS.has(str.toLowerCase())) return undefined;
+    return str;
   }
-  if (x && typeof x === 'object'){
-    // support { "1": "Xin chào", "2": "..." }
-    return Object.entries(x)
-      .map(([k, v]) => (v == null ? null : { id: String(k), vi: String(v) }))
-      .filter(Boolean);
+
+  function pushPair(id, vi, fallbackId){
+    const resolvedId = extractString(id, usableFallback(fallbackId));
+    const resolvedVi = extractString(vi);
+    if (!resolvedId || !resolvedVi) return;
+    out.push({ id: String(resolvedId), vi: String(resolvedVi) });
   }
-  return [];
+
+  function fromObject(it, fallbackId){
+    if (!it || typeof it !== 'object') return false;
+    const safeFallback = usableFallback(fallbackId);
+    const idCandidate = it.id ?? it.i ?? it.key ?? it.k ?? it.name ?? it.index ?? it.position ?? safeFallback;
+    let viCandidate = it.vi ?? it.text ?? it.translation ?? it.v ?? it.t ?? it.value ?? it.output ?? it.content ?? it.answer ?? it.message ?? it.response;
+    if (viCandidate == null && typeof it.body === 'string') viCandidate = it.body;
+    if (viCandidate == null && typeof it.data === 'string') viCandidate = it.data;
+    if (viCandidate == null && Array.isArray(it.values)) viCandidate = it.values;
+    if (viCandidate == null && Array.isArray(it.parts)) viCandidate = it.parts;
+    if (viCandidate == null && typeof it.result === 'string') viCandidate = it.result;
+    if (viCandidate == null && typeof it.outputText === 'string') viCandidate = it.outputText;
+    if (viCandidate == null && typeof it.responseText === 'string') viCandidate = it.responseText;
+    const resolvedId = extractString(idCandidate);
+    const resolvedVi = extractString(viCandidate);
+    if (!resolvedId || !resolvedVi) return false;
+    out.push({ id: String(resolvedId), vi: String(resolvedVi) });
+    return true;
+  }
+
+  function norm(it, fallbackId){
+    if (it == null) return;
+    const safeFallback = usableFallback(fallbackId);
+    if (Array.isArray(it)){
+      if (it.length === 2 && typeof it[0] !== 'object' && typeof it[1] !== 'object'){
+        pushPair(it[0], it[1], safeFallback);
+        return;
+      }
+      for (const entry of it){
+        if (Array.isArray(entry) && entry.length >= 2){
+          const [idCandidate, viCandidate] = entry;
+          const resolvedId = extractString(idCandidate, safeFallback);
+          const resolvedVi = extractString(viCandidate);
+          if (resolvedId && resolvedVi){
+            out.push({ id: String(resolvedId), vi: String(resolvedVi) });
+            continue;
+          }
+        }
+        if (fromObject(entry, safeFallback)) continue;
+        if (typeof entry !== 'object'){
+          if (safeFallback != null) pushPair(safeFallback, entry, safeFallback);
+          continue;
+        }
+        norm(entry, safeFallback);
+      }
+      return;
+    }
+    if (typeof it !== 'object'){
+      if (safeFallback != null) pushPair(safeFallback, it, safeFallback);
+      return;
+    }
+    if (fromObject(it, safeFallback)) return;
+    for (const [k, v] of Object.entries(it)){
+      if (v == null) continue;
+      norm(v, k);
+    }
+  }
+
+  norm(x, undefined);
+  return out;
 }
 
 function tryParseJSON(s){
@@ -60,6 +168,112 @@ function tryParseJSON(s){
   try { return JSON.parse(t); } catch(_){}
   const a = t.indexOf('['), b = t.lastIndexOf(']');
   if (a>=0 && b>a) { try { return JSON.parse(t.slice(a,b+1)); } catch(_){} }
+  return null;
+}
+
+function extractNormalizedPairs(value, seen = new Set()){
+  if (value == null) return null;
+
+  let parsed = value;
+  if (typeof value === 'string'){
+    parsed = tryParseJSON(value);
+    if (!parsed) return null;
+  }
+
+  if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')){
+    if (seen.has(parsed)) return null;
+    seen.add(parsed);
+
+    const normalized = normalizePairs(parsed);
+    if (normalized.length) return normalized;
+
+    if (Array.isArray(parsed)){
+      for (const item of parsed){
+        const inner = extractNormalizedPairs(item, seen);
+        if (inner && inner.length) return inner;
+      }
+    } else {
+      for (const v of Object.values(parsed)){
+        const inner = extractNormalizedPairs(v, seen);
+        if (inner && inner.length) return inner;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractFromInlineData(inlineData){
+  if (!inlineData || typeof inlineData !== 'object') return null;
+  const mime = typeof inlineData.mimeType === 'string' ? inlineData.mimeType.toLowerCase() : '';
+  if (!mime.includes('json')) return null;
+
+  const data = inlineData.data;
+  if (typeof data === 'string'){
+    const candidates = [];
+    candidates.push(data);
+    try {
+      const decoded = atob(data);
+      if (decoded !== data) candidates.push(decoded);
+    } catch(_){}
+    for (const cand of candidates){
+      const normalized = extractNormalizedPairs(cand);
+      if (normalized && normalized.length) return normalized;
+    }
+    return null;
+  }
+  return extractNormalizedPairs(data);
+}
+
+function extractFromParts(parts, textCollector){
+  if (!Array.isArray(parts)) return null;
+  const ownText = [];
+  const textChunks = Array.isArray(textCollector) ? textCollector : ownText;
+
+  for (const part of parts){
+    if (!part || typeof part !== 'object') continue;
+
+    if (part.functionCall && Object.prototype.hasOwnProperty.call(part.functionCall, 'args')){
+      const normalized = extractNormalizedPairs(part.functionCall.args);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    if (part.inlineData){
+      const normalized = extractFromInlineData(part.inlineData);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    for (const [key, value] of Object.entries(part)){
+      if (key === 'text' || key === 'inlineData' || key === 'functionCall') continue;
+      const normalized = extractNormalizedPairs(value);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    if (typeof part.text === 'string' && part.text.trim()){
+      textChunks.push(part.text);
+    }
+  }
+
+  if (!textCollector && ownText.length){
+    const normalized = extractNormalizedPairs(ownText.join('\n'));
+    if (normalized && normalized.length) return normalized;
+  }
+
+  return null;
+}
+
+function extractFromCandidates(candidates){
+  if (!Array.isArray(candidates)) return null;
+  const textChunks = [];
+  for (const cand of candidates){
+    const parts = cand?.content?.parts;
+    const structured = extractFromParts(parts, textChunks);
+    if (structured && structured.length) return structured;
+  }
+  if (textChunks.length){
+    const normalized = extractNormalizedPairs(textChunks.join('\n'));
+    if (normalized && normalized.length) return normalized;
+  }
   return null;
 }
 
@@ -101,13 +315,11 @@ async function callWithRetry(apiKey, model, batch){
   for (let attempt=0; attempt<MAX_RETRY; attempt++){
     const r = await rawCall(apiKey, model, batch, useJsonMode);
     if (r.ok){
-      // In JSON mode, the API usually returns JSON string in candidates.parts[0].text
-      const text = r.json?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      const arr = tryParseJSON(text);
-      if (Array.isArray(arr)) { const n = normalizePairs(arr); if (n.length) return n; }
-      // If text empty but we are in JSON mode, try to parse direct 'text' in body just in case
-      const arr2 = tryParseJSON(r.text);
-      if (Array.isArray(arr2)) { const n2 = normalizePairs(arr2); if (n2.length) return n2; }
+      const structured = extractFromCandidates(r.json?.candidates);
+      if (structured && structured.length) return structured;
+
+      const fallback = extractNormalizedPairs(r.text);
+      if (fallback && fallback.length) return fallback;
     } else {
       if (isSchemaUnsupported(r)){
         useJsonMode = false; // fallback to prompt-only mode
