@@ -30,7 +30,9 @@ function normalizePairs(x){
   }
   if (x && typeof x === 'object'){
     // support { "1": "Xin chào", "2": "..." }
-    return Object.keys(x).map(k => ({ id: String(k), vi: String(x[k]) }));
+    return Object.entries(x)
+      .map(([k, v]) => (v == null ? null : { id: String(k), vi: String(v) }))
+      .filter(Boolean);
   }
   return [];
 }
