@@ -6,6 +6,22 @@ const MAX_RETRY = 5;
 
 function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
 
+function storageGet(area, keys){
+  return new Promise(resolve => {
+    try {
+      chrome.storage[area].get(keys, (res) => {
+        if (chrome.runtime?.lastError) {
+          resolve({});
+        } else {
+          resolve(res || {});
+        }
+      });
+    } catch (_) {
+      resolve({});
+    }
+  });
+}
+
 function buildPrompt(batch){
   const header = [
     'Bạn là engine dịch. Dịch từng "text" sang tiếng Việt.',
@@ -114,15 +130,29 @@ async function callWithRetry(apiKey, model, batch){
   throw new Error('BAD_JSON_RESPONSE');
 }
 
+async function getStoredConfig(){
+  const syncData = await storageGet('sync', ['GEMINI_API_KEY','GEMINI_MODEL']);
+  let key = syncData?.GEMINI_API_KEY;
+  let model = syncData?.GEMINI_MODEL;
+  if (!key || !model){
+    const localData = await storageGet('local', ['GEMINI_API_KEY','GEMINI_MODEL']);
+    if (!key && localData?.GEMINI_API_KEY) key = localData.GEMINI_API_KEY;
+    if (!model && localData?.GEMINI_MODEL) model = localData.GEMINI_MODEL;
+  }
+  if (typeof key === 'string') key = key.trim();
+  if (typeof model === 'string') model = model.trim();
+  return { key, model };
+}
+
 async function translateItems(items){
-  const { GEMINI_API_KEY, GEMINI_MODEL } = await chrome.storage.sync.get(['GEMINI_API_KEY','GEMINI_MODEL']);
-  if (!GEMINI_API_KEY) throw new Error('NO_API_KEY');
-  const model = GEMINI_MODEL || DEFAULT_MODEL;
+  const { key, model } = await getStoredConfig();
+  if (!key) throw new Error('NO_API_KEY');
+  const resolvedModel = model || DEFAULT_MODEL;
 
   const out = [];
   for (let i=0; i<items.length; i+=MAX_BATCH){
     const chunk = items.slice(i, i+MAX_BATCH);
-    const piece = await callWithRetry(GEMINI_API_KEY, model, chunk);
+    const piece = await callWithRetry(key, resolvedModel, chunk);
     out.push(...piece);
     await sleep(THROTTLE_MS);
   }
@@ -130,9 +160,11 @@ async function translateItems(items){
 }
 
 async function testApi(override){
-  const st = await chrome.storage.sync.get(['GEMINI_API_KEY','GEMINI_MODEL']);
-  const key = (override && override.key) || st.GEMINI_API_KEY;
-  const model = (override && override.model) || st.GEMINI_MODEL || 'gemini-2.5-flash';
+  const stored = await getStoredConfig();
+  const overrideKey = typeof override?.key === 'string' ? override.key.trim() : override?.key;
+  const overrideModel = typeof override?.model === 'string' ? override.model.trim() : override?.model;
+  const key = overrideKey || stored.key;
+  const model = overrideModel || stored.model || 'gemini-2.5-flash';
   if (!key) return { ok:false, error:'NO_API_KEY' };
   const body = {
     contents: [{ role: 'user', parts: [{ text: 'Trả về JSON mảng: [{"id":"1","text":"Hello world"}] dịch sang tiếng Việt. Chỉ JSON.' }]}],
