@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cài đặt AI Translator</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 720px; }
+    label { display:block; margin: 10px 0 6px; }
+    input, select { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    .row { display: flex; gap: 12px; align-items: center; }
+    .row > * { flex: 1; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #0b57d0; background: white; color: #0b57d0; cursor: pointer; }
+    .hint { font-size: 12px; color: #555; }
+    .ok { color: #0a7c2d; }
+    .warn { color: #b3261e; }
+    pre { background:#f6f8fa; padding:10px; border-radius:8px; overflow:auto; max-height:200px;}
+  </style>
+</head>
+<body>
+  <h2>Cài đặt AI Translator (Gemini)</h2>
+  <label for="apiKey">Gemini API key (AI Studio)</label>
+  <input id="apiKey" type="password" placeholder="AIza...">
+  <div class="row">
+    <div>
+      <label for="model">Model</label>
+      <select id="model">
+        <option value="gemini-2.5-flash">gemini-2.5-flash (khuyên dùng)</option>
+        <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+      </select>
+    </div>
+    <div style="align-self:flex-end">
+      <button id="saveBtn">Lưu</button>
+    </div>
+  </div>
+  <p class="hint" id="msg"></p>
+  <div class="row"><button id="verifyBtn">Xác minh API key</button><span id="verifyStatus" class="hint"></span></div>
+  <hr>
+  <h3>Kiểm tra API</h3>
+  <div class="row">
+    <button id="pingBtn">Ping service worker</button>
+    <span id="pingResult" class="hint"></span>
+  </div>
+  <div class="row">
+    <button id="testBtn">Gọi thử Gemini (JSON mode)</button>
+    <span id="testInfo" class="hint"></span>
+  </div>
+  <pre id="testOutput"></pre>
+  <script src="options.js"></script>
+</body>
+</html>
