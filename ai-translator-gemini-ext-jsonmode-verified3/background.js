@@ -47,7 +47,11 @@ function normalizePairs(x){
   if (x && typeof x === 'object'){
     // support { "1": "Xin chào", "2": "..." }
     return Object.entries(x)
-      .map(([k, v]) => (v == null ? null : { id: String(k), vi: String(v) }))
+      .map(([k, v]) => {
+        if (v == null) return null;
+        if (typeof v === 'object') return null;
+        return { id: String(k), vi: String(v) };
+      })
       .filter(Boolean);
   }
   return [];
@@ -60,6 +64,96 @@ function tryParseJSON(s){
   try { return JSON.parse(t); } catch(_){}
   const a = t.indexOf('['), b = t.lastIndexOf(']');
   if (a>=0 && b>a) { try { return JSON.parse(t.slice(a,b+1)); } catch(_){} }
+  return null;
+}
+
+function extractNormalizedPairs(value, seen = new Set()){
+  if (value == null) return null;
+
+  let parsed = value;
+  if (typeof value === 'string'){
+    parsed = tryParseJSON(value);
+    if (!parsed) return null;
+  }
+
+  if (Array.isArray(parsed) || (parsed && typeof parsed === 'object')){
+    if (seen.has(parsed)) return null;
+    seen.add(parsed);
+
+    const normalized = normalizePairs(parsed);
+    if (normalized.length) return normalized;
+
+    if (Array.isArray(parsed)){
+      for (const item of parsed){
+        const inner = extractNormalizedPairs(item, seen);
+        if (inner && inner.length) return inner;
+      }
+    } else {
+      for (const v of Object.values(parsed)){
+        const inner = extractNormalizedPairs(v, seen);
+        if (inner && inner.length) return inner;
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractFromInlineData(inlineData){
+  if (!inlineData || typeof inlineData !== 'object') return null;
+  const mime = typeof inlineData.mimeType === 'string' ? inlineData.mimeType.toLowerCase() : '';
+  if (!mime.includes('json')) return null;
+
+  const data = inlineData.data;
+  if (typeof data === 'string'){
+    const candidates = [];
+    candidates.push(data);
+    try {
+      const decoded = atob(data);
+      if (decoded !== data) candidates.push(decoded);
+    } catch(_){}
+    for (const cand of candidates){
+      const normalized = extractNormalizedPairs(cand);
+      if (normalized && normalized.length) return normalized;
+    }
+    return null;
+  }
+  return extractNormalizedPairs(data);
+}
+
+function extractFromParts(parts){
+  if (!Array.isArray(parts)) return null;
+  const textChunks = [];
+
+  for (const part of parts){
+    if (!part || typeof part !== 'object') continue;
+
+    if (part.functionCall && Object.prototype.hasOwnProperty.call(part.functionCall, 'args')){
+      const normalized = extractNormalizedPairs(part.functionCall.args);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    if (part.inlineData){
+      const normalized = extractFromInlineData(part.inlineData);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    for (const [key, value] of Object.entries(part)){
+      if (key === 'text' || key === 'inlineData' || key === 'functionCall') continue;
+      const normalized = extractNormalizedPairs(value);
+      if (normalized && normalized.length) return normalized;
+    }
+
+    if (typeof part.text === 'string' && part.text.trim()){
+      textChunks.push(part.text);
+    }
+  }
+
+  if (textChunks.length){
+    const normalized = extractNormalizedPairs(textChunks.join('\n'));
+    if (normalized && normalized.length) return normalized;
+  }
+
   return null;
 }
 
@@ -101,13 +195,12 @@ async function callWithRetry(apiKey, model, batch){
   for (let attempt=0; attempt<MAX_RETRY; attempt++){
     const r = await rawCall(apiKey, model, batch, useJsonMode);
     if (r.ok){
-      // In JSON mode, the API usually returns JSON string in candidates.parts[0].text
-      const text = r.json?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      const arr = tryParseJSON(text);
-      if (Array.isArray(arr)) { const n = normalizePairs(arr); if (n.length) return n; }
-      // If text empty but we are in JSON mode, try to parse direct 'text' in body just in case
-      const arr2 = tryParseJSON(r.text);
-      if (Array.isArray(arr2)) { const n2 = normalizePairs(arr2); if (n2.length) return n2; }
+      const parts = r.json?.candidates?.[0]?.content?.parts;
+      const structured = extractFromParts(parts);
+      if (structured && structured.length) return structured;
+
+      const fallback = extractNormalizedPairs(r.text);
+      if (fallback && fallback.length) return fallback;
     } else {
       if (isSchemaUnsupported(r)){
         useJsonMode = false; // fallback to prompt-only mode
