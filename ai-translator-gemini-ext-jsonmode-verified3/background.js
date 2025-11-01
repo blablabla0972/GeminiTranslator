@@ -35,7 +35,7 @@ function buildPrompt(batch){
 
 function normalizePairs(x){
   const out = [];
-  const RESERVED_KEYS = new Set(['text','value','values','translation','translations','items','item','data','payload','parts','content','contents','output','outputs','response','responses','result','results','body','message','messages','answer','answers']);
+  const RESERVED_KEYS = new Set(['text','value','values','translation','translations','items','item','data','payload','parts','content','contents','output','outputs','response','responses','result','results','body','message','messages','answer','answers','vi']);
 
   function extractString(value, fallback){
     if (value == null) return fallback ?? null;
@@ -55,7 +55,7 @@ function normalizePairs(x){
       return pieces.length ? pieces.join('\n') : fallback ?? null;
     }
     if (typeof value === 'object'){
-      const direct = value.vi ?? value.text ?? value.translation ?? value.v ?? value.t ?? value.value ?? value.output ?? value.content ?? value.message ?? value.answer ?? value.response ?? value.stringValue ?? value.displayText;
+      const direct = value.vi ?? value.translation ?? value.translatedText ?? value.v ?? value.t ?? value.value ?? value.output ?? value.outputs ?? value.response ?? value.responses ?? value.answer ?? value.answers ?? value.message ?? value.messages ?? value.content ?? value.contents ?? value.text ?? value.stringValue ?? value.displayText;
       if (direct != null){
         return extractString(direct, fallback);
       }
@@ -104,17 +104,49 @@ function normalizePairs(x){
     if (!it || typeof it !== 'object') return false;
     const safeFallback = usableFallback(fallbackId);
     const idCandidate = it.id ?? it.i ?? it.key ?? it.k ?? it.name ?? it.index ?? it.position ?? safeFallback;
-    let viCandidate = it.vi ?? it.text ?? it.translation ?? it.v ?? it.t ?? it.value ?? it.output ?? it.content ?? it.answer ?? it.message ?? it.response;
-    if (viCandidate == null && typeof it.body === 'string') viCandidate = it.body;
-    if (viCandidate == null && typeof it.data === 'string') viCandidate = it.data;
-    if (viCandidate == null && Array.isArray(it.values)) viCandidate = it.values;
-    if (viCandidate == null && Array.isArray(it.parts)) viCandidate = it.parts;
-    if (viCandidate == null && typeof it.result === 'string') viCandidate = it.result;
-    if (viCandidate == null && typeof it.outputText === 'string') viCandidate = it.outputText;
-    if (viCandidate == null && typeof it.responseText === 'string') viCandidate = it.responseText;
-    const resolvedId = extractString(idCandidate);
-    const resolvedVi = extractString(viCandidate);
-    if (!resolvedId || !resolvedVi) return false;
+    const resolvedId = extractString(idCandidate, safeFallback);
+    if (!resolvedId) return false;
+
+    const translationSources = [
+      it.vi,
+      it.translation,
+      it.translatedText,
+      it.translations,
+      it.v,
+      it.t,
+      it.value,
+      it.values,
+      it.output,
+      it.outputs,
+      it.outputText,
+      it.response,
+      it.responses,
+      it.responseText,
+      it.answer,
+      it.answers,
+      it.message,
+      it.messages,
+      it.content,
+      it.contents,
+      it.parts,
+      it.body,
+      it.data,
+      it.payload,
+      it.result,
+      it.text
+    ];
+
+    let resolvedVi = null;
+    for (const candidate of translationSources){
+      const str = extractString(candidate);
+      if (str){
+        resolvedVi = str;
+        break;
+      }
+    }
+
+    if (!resolvedVi) return false;
+
     out.push({ id: String(resolvedId), vi: String(resolvedVi) });
     return true;
   }
